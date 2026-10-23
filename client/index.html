@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+<body>
+  <input id="nickname" placeholder="输入昵称" value="Alice" />
+  <button id="loginBtn">登录</button>
+  <button id="logoutBtn">退出登录</button>
+  <input id="roomIdInput" placeholder="房间号" />
+  <button id="createRoomBtn">创建房间</button>
+  <button id="joinRoomBtn">加入房间</button>
+  <canvas id="game" width="800" height="600" style="border:1px solid #ccc"></canvas>
+  <div id="log"></div>
+  <div>
+    <input id="chatInput" placeholder="说点什么" />
+    <button id="chatBtn">发送</button>
+  </div>
+  <div id="chatBox" style="border:1px solid #ccc; height:150px; overflow-y:auto; margin-top:8px;"></div>
+
+  <script>
+    const ws = new WebSocket('ws://localhost:3000');
+    const log = document.getElementById('log');
+
+    const keys = new Set();
+
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    let myPlayerId = null;
+
+    function show(text) {
+      log.innerText += text + '\n';
+    }
+
+    ws.onopen = () => {
+      show('已连接服务器');
+
+      const savedPlayerId = localStorage.getItem('playerId');
+      const savedToken = localStorage.getItem('token');
+
+      if (savedPlayerId && savedToken) {
+        ws.send(JSON.stringify({
+          type: 'reconnect',
+          data: {
+            playerId: Number(savedPlayerId),
+            token: savedToken
+          }
+        }));
+        show('尝试重连...');
+      }
+    };
+
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+
+      if (msg.type === 'login_ok' || msg.type === 'reconnect_ok') {
+        myPlayerId = msg.data.playerId;
+        show(`登录成功：playerId=${msg.data.playerId} 昵称=${msg.data.nickname}`);
+        localStorage.setItem('playerId', msg.data.playerId);
+        if (msg.data.token) localStorage.setItem('token', msg.data.token);
+
+        // 重连时如果原来在房间，恢复
+        if (msg.data.room) {
+          show(`恢复到房间 roomId=${msg.data.room.roomId}，玩家=${msg.data.room.players.join(',')}`);
+        }
+      } else if (msg.type === 'reconnect_fail') {
+        show(`重连失败：${msg.data.reason}，请重新登录`);
+        localStorage.removeItem('playerId');
+        localStorage.removeItem('token');
+      } else if (msg.type === 'login_fail') {
+        show(`登录失败：${msg.data.reason}`);
+      } else if (msg.type === 'room_created') {
+        show(`房间创建成功：roomId=${msg.data.roomId}`);
+      } else if (msg.type === 'room_joined') {
+        show(`加入房间成功：roomId=${msg.data.roomId}，玩家=${msg.data.players.join(',')}`);
+      } else if (msg.type === 'player_joined') {
+        show(`玩家 ${msg.data.nickname}(id=${msg.data.playerId}) 加入了房间`);
+      } else if (msg.type === 'player_left') {
+        show(`玩家 ${msg.data.playerId} 离开了房间`);
+      } else if (msg.type === 'player_offline') {
+        show(`玩家 ${msg.data.playerId} 掉线了`);
+      } else if (msg.type === 'player_online') {
+        show(`玩家 ${msg.data.playerId} 回来了`);
+      } else if (msg.type === 'error') {
+        show(`错误：${msg.data.reason}`);
+      } else if (msg.type === 'state') {
+        renderState(msg.data);
+      }else if (msg.type === 'chat') {
+        const box = document.getElementById('chatBox');
+        const d = msg.data;
+        const line = document.createElement('div');
+        line.innerText = `[${d.nickname}] ${d.text}`;
+        box.appendChild(line);
+        box.scrollTop = box.scrollHeight;
+      }
+    };
+
+    ws.onclose = () => show('连接断开');
+
+    document.getElementById('loginBtn').onclick = () => {
+      const nickname = document.getElementById('nickname').value;
+      ws.send(JSON.stringify({ type: 'login', data: { nickname } }));
+      show(`发送登录：${nickname}`);
+    };
+
+    document.getElementById('logoutBtn').onclick = () => {
+      ws.send(JSON.stringify({ type: 'leave_room', data: {} }));
+      ws.close();
+      localStorage.removeItem('playerId');
+      localStorage.removeItem('token');
+      show('已退出登录');
+    };
+    document.getElementById('createRoomBtn').onclick = () => {
+      ws.send(JSON.stringify({ type: 'create_room', data: {} }));
+    };
+
+    document.getElementById('joinRoomBtn').onclick = () => {
+      const roomId = Number(document.getElementById('roomIdInput').value);
+      ws.send(JSON.stringify({ type: 'join_room', data: { roomId } }));
+    };
+
+
+function sendInput() {
+  let dx = 0, dy = 0;
+  if (keys.has('ArrowLeft') || keys.has('a')) dx -= 1;
+  if (keys.has('ArrowRight') || keys.has('d')) dx += 1;
+  if (keys.has('ArrowUp') || keys.has('w')) dy -= 1;
+  if (keys.has('ArrowDown') || keys.has('s')) dy += 1;
+
+  if (ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'input', data: { dx, dy } }));
+  }
+}
+
+window.addEventListener('keydown', (e) => {
+  if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','w','a','s','d'].includes(e.key)) {
+    e.preventDefault();
+    keys.add(e.key);
+    sendInput();
+  }
+});
+
+window.addEventListener('keyup', (e) => {
+  keys.delete(e.key);
+  sendInput();
+});
+
+
+function renderState(state) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  for (const p of state.players) {
+    ctx.fillStyle = p.online ? (p.id === myPlayerId ? '#e74c3c' : '#3498db') : '#95a5a6';
+    ctx.fillRect(p.x - 10, p.y - 10, 20, 20);
+
+    ctx.fillStyle = '#000';
+    ctx.font = '12px sans-serif';
+    ctx.fillText(p.nickname, p.x - 15, p.y - 14);
+  }
+}
+
+function sendChat() {
+  const input = document.getElementById('chatInput');
+  const text = input.value.trim();
+  if (!text) return;
+
+  if (ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'chat', data: { text } }));
+  }
+  input.value = '';
+}
+
+document.getElementById('chatBtn').onclick = sendChat;
+document.getElementById('chatInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') sendChat();
+});
+  </script>
+</body>
+</html>

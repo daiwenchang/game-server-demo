@@ -1,0 +1,19 @@
+const { WebSocketServer } = require('ws');
+
+const wss = new WebSocketServer({ port: 3000 });
+
+console.log('服务器启动，监听 3000 端口');
+
+wss.on('connection', (ws) => {
+  console.log('有客户端连进来了');
+
+  ws.on('message', (data) => {
+    const text = data.toString();
+    console.log('收到:', text);
+    ws.send('你好，客户端，我收到了: ' + text);
+  });
+
+  ws.on('close', () => {
+    console.log('客户端断开了');
+  });
+});

@@ -25,6 +25,8 @@
     const ctx = canvas.getContext('2d');
     let myPlayerId = null;
 
+    const renderPlayers = new Map();  // id -> { x, y, tx, ty, nickname, online }
+
     function show(text) {
       log.innerText += text + '\n';
     }
@@ -81,8 +83,8 @@
       } else if (msg.type === 'error') {
         show(`错误：${msg.data.reason}`);
       } else if (msg.type === 'state') {
-        renderState(msg.data);
-      }else if (msg.type === 'chat') {
+        onState(msg.data);
+      } else if (msg.type === 'chat') {
         const box = document.getElementById('chatBox');
         const d = msg.data;
         const line = document.createElement('div');
@@ -143,18 +145,60 @@ window.addEventListener('keyup', (e) => {
 });
 
 
-function renderState(state) {
+// function renderState(state) {
+//   ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+//   for (const p of state.players) {
+//     ctx.fillStyle = p.online ? (p.id === myPlayerId ? '#e74c3c' : '#3498db') : '#95a5a6';
+//     ctx.fillRect(p.x - 10, p.y - 10, 20, 20);
+
+//     ctx.fillStyle = '#000';
+//     ctx.font = '12px sans-serif';
+//     ctx.fillText(p.nickname, p.x - 15, p.y - 14);
+//   }
+// }
+
+function onState(state) {
+  for (const p of state.players) {
+    let rp = renderPlayers.get(p.id);
+    if (!rp) {
+      rp = { x: p.x, y: p.y, tx: p.x, ty: p.y, nickname: p.nickname, online: p.online };
+      renderPlayers.set(p.id, rp);
+    } else {
+      rp.tx = p.x;
+      rp.ty = p.y;
+      rp.nickname = p.nickname;
+      rp.online = p.online;
+    }
+  }
+
+  const ids = new Set(state.players.map(p => p.id));
+  for (const id of renderPlayers.keys()) {
+    if (!ids.has(id)) renderPlayers.delete(id);
+  }
+}
+
+function renderLoop() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  for (const p of state.players) {
-    ctx.fillStyle = p.online ? (p.id === myPlayerId ? '#e74c3c' : '#3498db') : '#95a5a6';
-    ctx.fillRect(p.x - 10, p.y - 10, 20, 20);
+  for (const [id, rp] of renderPlayers) {
+    // 指数平滑：每帧靠近目标 30%
+    rp.x += (rp.tx - rp.x) * 0.3;
+    rp.y += (rp.ty - rp.y) * 0.3;
+
+    ctx.fillStyle = rp.online ? (id === myPlayerId ? '#e74c3c' : '#3498db') : '#95a5a6';
+    ctx.fillRect(rp.x - 10, rp.y - 10, 20, 20);
 
     ctx.fillStyle = '#000';
     ctx.font = '12px sans-serif';
-    ctx.fillText(p.nickname, p.x - 15, p.y - 14);
+    ctx.fillText(rp.nickname, rp.x - 15, rp.y - 14);
   }
+
+  requestAnimationFrame(renderLoop);
 }
+
+renderLoop();
+
 
 function sendChat() {
   const input = document.getElementById('chatInput');
